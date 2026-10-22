@@ -8,7 +8,8 @@
 #librerias para la implementacion 
 library(car)
 library(klaR)
-
+library(mctest)
+library(glmnet)
 path="C:/Users/diego/Documents/GitHub/Estadistica-II/Trabajo I/Datos/Base04.csv"
 #lectura de los datos en un dataframe
 data=read.csv(file=path)
@@ -77,7 +78,7 @@ str(test_data)
 
 
 #modelo de regresion lineal multiple con variables categoricas
-modelo_lineal=lm(Rendimiento~.-Broca-Roya-V-Temp-Alti-RH,data=data_name)
+modelo_lineal=lm(Rendimiento~.-Broca-Roya,data=data_name)
 
 #...............................................................................
 # Evaluacion de significancia
@@ -105,14 +106,22 @@ cor(X[,-1])
 vif(modelo_lineal)
 
 
+
+#/////////////////////////////////////////////////////////////////////////
+# Para poder hacer la pruebas de multicolinalidad con el numero de condicion y 
+# los indices de condicion se debe de escalar los datos para tener resultados congruentes.
+#////////////////////////////////////////////////////////////////////////
+
 # numero condicion (Kappa)
-#kappa = lambda_max/lambda_min
+# kappa = lambda_max/lambda_min
 #------------------------------------
 #sqrt(K)<=10 No hay multicolinealidad
 #sqrt(K)<=31.62 multicolin moderada
 #sqrt(K)>31.62 multicolin grave
 #------------------------------------
-kappa(modelo_lineal)
+X<-model.matrix(modelo_lineal) #matrix del modelo
+X_scale<-scale(X[,-1])        #matrix del modelo excluyendo el intercepto
+kappa(X_scale,exact=TRUE)
 
 
 #Indice de condicion
@@ -122,7 +131,70 @@ kappa(modelo_lineal)
 #sqrt(K)<=31.62 multicolin moderada
 #sqrt(K)>31.62 multicolin grave
 #-------------------------------------
-cond.index(Rendimiento~.-Broca-Roya-V-Temp-Alti-RH,data=data_name)
+# Calcular SVD sobre la matriz centrada y escalada
+svd_res <- svd(X_scale)
+indices_centrados <- max(svd_res$d) / svd_res$d
+indices_centrados
+
+
+#...............................................................................
+# Verificacion de modelos con Ridge lasso
+#..............................................................................
+
+
+#----------------
+#       Ridge
+#----------------
+#Extraemos los datos para los aplicar ridge
+
+Y=data_name$Rendimiento
+Y
+#metodo de ridge grafico
+ridgefit = glmnet(X,Y,alpha=0,lambda=seq(0,5,0.0001))
+plot(ridgefit, xvar="lambda",xlab=expression(log(lambda)))
+
+
+
+
+
+ridgecv=cv.glmnet(X,Y,alpha=0,nfolds=10,lambda=seq(0,100,length.out=100))
+cvmridge = min(ridgecv$cvm)
+small.lambda.index=which(ridgecv$cvm==cvmridge)
+plot(ridgecv,xlab=expression(log(lambda)))
+#Horizontal line: Minimum mean cross-validated error
+abline(h= ridgecv$cvm[small.lambda.index])
+#Vertical line: Optimum lambda
+abline(v=-log(ridgecv$lambda[small.lambda.index]))
+
+ridgecv$lambda.min
+coef(ridgecv)
+
+
+
+#--------------
+#lasso
+#--------------
+
+lassocv=cv.glmnet(X,Y,alpha=1,nfolds=10,lambda=seq(1e-2,length.out=100))
+?cv.glmnet
+cvmlasso = min(lassocv$cvm)
+
+small.lambda.index=which(lassocv$cvm==cvmlasso)
+
+plot(lassocv,xlab=expression(log(lambda)))
+
+#Horizontal line: Minimum mean cross-validated error
+abline(h= lassocv$cvm[small.lambda.index])
+#Vertical line: Optimum lambda
+abline(v=-log(lassocv$lambda[small.lambda.index]))
+
+lassocv$lambda.min
+coef(lassocv)
+
+
+
+#calculamos los valores del los coeficientes para los tres modelos
+
 
 
 
