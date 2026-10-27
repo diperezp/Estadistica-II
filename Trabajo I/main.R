@@ -10,7 +10,10 @@ library(car)
 library(klaR)
 library(mctest)
 library(glmnet)
+library(tidymodels)
 path="C:/Users/diego/Documents/GitHub/Estadistica-II/Trabajo I/Datos/Base04.csv"
+path_resources="C:/Users/diego/Documents/GitHub/Estadistica-II/Trabajo I/resorces/Functions.R"
+
 #lectura de los datos en un dataframe
 data=read.csv(file=path)
 
@@ -148,7 +151,6 @@ indices_centrados
 #Extraemos los datos para los aplicar ridge
 
 Y=data_name$Rendimiento
-Y
 #metodo de ridge grafico
 ridgefit = glmnet(X,Y,alpha=0,lambda=seq(0,5,0.0001))
 plot(ridgefit, xvar="lambda",xlab=expression(log(lambda)))
@@ -176,7 +178,6 @@ coef(ridgecv)
 #--------------
 
 lassocv=cv.glmnet(X,Y,alpha=1,nfolds=10,lambda=seq(1e-2,length.out=100))
-?cv.glmnet
 cvmlasso = min(lassocv$cvm)
 
 small.lambda.index=which(lassocv$cvm==cvmlasso)
@@ -193,10 +194,79 @@ coef(lassocv)
 
 
 
-#calculamos los valores del los coeficientes para los tres modelos
+#-------------------------------------------------------------------------------
+#                             Seleccion del mejor modelo
+#-------------------------------------------------------------------------------
 
 
+#modelos
 
 
+modelo_1=modelo_lineal #modelo completo
+modelo_2=lm(Rendimiento~.-Broca-Roya-Temp-RH-Dt,data=data_name)  #modelo restringido por lasso
+
+#modificacion de los datos para añadir el termico cuadratico
+data_new=data_name      #buffer
+data_new$Temp_sqr=(data_new$Temp)^2         #adicion del termino cuadratico de la temperatura
+modelo_3=lm(Rendimiento~.-Broca-Roya-Temp,data=data_new)      #modelo con el termino cuadratico de la temperatura
+
+#Resumen de los modelos propuestos
+summary(modelo_1)
+summary(modelo_2)
+summary(modelo_3)
 
 
+#division de los datos para el entrenamiento y testeo
+
+#metodo del conjunto de validacion: 80% train y 20% test
+data_folds1=mc_cv(data_name,prop=0.8,times=1)
+
+#metodo leave one out cross validation (LOOCV)
+loo=rsample::loo_cv(data_name)
+data_folds2=rsample::manual_rset(loo$splits,loo$id)
+
+#metodo k folds
+data_folds3=vfold_cv(data_name,v=10,repeats=1)
+
+
+#se especifica el tipo de modelo
+lm_model=linear_reg()%>%set_engine("lm")
+
+
+#Criterios de seleccion de modelo
+modelos=list(
+  model_1=Rendimiento~.-Broca-Roya,              #modelo completo
+  model_2=Rendimiento~.-Broca-Roya-Temp-RH-Dt,   #modelo lasso
+  model_3=Rendimiento~.-Broca-Roya-Temp          #modelo Temp_sqrt
+)
+
+
+#se combinan las formulas de los diferentes modelos
+lm_models<-workflow_set(
+  preproc = modelos,
+  models = list(lm_model)
+)
+
+#definimos el metodo de validacion a emplear
+cv_results = lm_models%>%workflow_map(fn="fit_resamples",
+                                      resamples=data_folds2,
+                                      metrics=metric_set(rmse),
+                                      control=control_resamples(save_pred=TRUE))
+
+
+modelo_performance=collect_metrics(
+  cv_results,summarize = FALSE)%>%
+  group_by(wflow_id)%>%
+  transmute(modelo = wflow_id,
+            RMSE=.estimate, MSE=.estimate^2) %>%
+  arrange(MSE)
+
+
+#Resultado
+print(modelo_performance)
+
+
+#ajustamos el modelo seleccionado con todos los datos de entrenamiento
+modelo_final<-extract_workflow(
+  cv_results,id=modelo_performance$modelo[1])%>%
+  fit(data=data_name)
